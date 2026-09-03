@@ -1,26 +1,17 @@
 ```
 # Dependencies
+node_modules/
 venv/
 .venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-node_modules/
-target/
-.mypy_cache/
 .pytest_cache/
+.mypy_cache/
 
-# Build artifacts
+# Build outputs
 dist/
 build/
-*.class
-*.jar
-*.war
-*.ear
-*.so
-*.dll
-*.dylib
+target/
 
 # Environment
 .env
@@ -32,6 +23,7 @@ build/
 .idea/
 *.swp
 *.swo
+*.tmp
 
 # Logs
 *.log
@@ -40,11 +32,28 @@ build/
 .DS_Store
 Thumbs.db
 
-# Coverage
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
 coverage/
 htmlcov/
 .coverage
 
-# Gradle
+# Java/Spring Boot
+*.class
+*.jar
+*.war
+*.ear
+target/
 .gradle/
+!spring-boot-app/target/
+!python-ai-service/venv/
+
+# Angular
+angular-ui/dist/
+angular-ui/node_modules/
+angular-ui/.angular/cache/
 ```

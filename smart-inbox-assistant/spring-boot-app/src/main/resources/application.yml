@@ -1,0 +1,66 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: smart-inbox-assistant
+  datasource:
+    url: jdbc:oracle:thin:@${ORACLE_HOST:localhost}:${ORACLE_PORT:1521}:${ORACLE_SERVICE:FREEPDB1}
+    username: ${ORACLE_USERNAME:inbox_admin}
+    password: ${ORACLE_PASSWORD:inbox_password}
+    driver-class-name: oracle.jdbc.OracleDriver
+  jdbc:
+    template:
+      query-timeout: 30
+  security:
+    user:
+      name: ${APP_ADMIN_USER:admin}
+      password: ${APP_ADMIN_PASSWORD:admin123}
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+# AI Service Configuration
+ai:
+  service:
+    url: ${AI_SERVICE_URL:http://localhost:5000}
+    timeout: 300
+    api-key: ${AI_API_KEY:your-api-key-here}
+
+# Mail Configuration (IMAP)
+mail:
+  imap:
+    host: ${MAIL_IMAP_HOST:imap.gmail.com}
+    port: ${MAIL_IMAP_PORT:993}
+    username: ${MAIL_USERNAME:your-email@gmail.com}
+    password: ${MAIL_PASSWORD:your-app-password}
+    folder: ${MAIL_FOLDER:INBOX}
+    poll-interval: ${MAIL_POLL_INTERVAL:60000} # milliseconds
+
+# Async Configuration
+async:
+  core-pool-size: 4
+  max-pool-size: 10
+  queue-capacity: 100
+  thread-name-prefix: inbox-processor-
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.pharma.inbox: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
