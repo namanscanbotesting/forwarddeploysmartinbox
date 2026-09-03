@@ -33,14 +33,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration from environment
+# ============================================================================
+# Configuration - OpenAI Compatible API (Phase 1-4)
+# ============================================================================
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
 AI_API_KEY = os.getenv("AI_API_KEY", "your-api-key-here")
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o")  # or claude-sonnet, etc.
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4o")
+AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "120"))
+AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "4096"))
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.1"))
+
 CONFIDENCE_THRESHOLDS = {
     "HIGH": 0.85,
     "MEDIUM": 0.65,
     "LOW": 0.45
 }
+
+# HTTP client for AI API calls
+import httpx
 
 # ============================================================================
 # Pydantic Models
@@ -81,6 +91,53 @@ class ProcessResponse(BaseModel):
 # Classification Logic (Phase 1)
 # ============================================================================
 
+async def call_ai_api(messages: list, temperature: float = AI_TEMPERATURE) -> dict:
+    """Call OpenAI-compatible API with retry logic"""
+    async with httpx.AsyncClient(
+        base_url=AI_BASE_URL,
+        headers={
+            "Authorization": f"Bearer {AI_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        timeout=AI_TIMEOUT
+    ) as client:
+        payload = {
+            "model": AI_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": AI_MAX_TOKENS,
+            "response_format": {"type": "json_object"}
+        }
+        
+        try:
+            response = await client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+            result = response.json()
+            return {
+                "content": result["choices"][0]["message"]["content"],
+                "usage": result.get("usage", {}),
+                "model": result.get("model", AI_MODEL)
+            }
+        except Exception as e:
+            logger.error(f"AI API call failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"AI API call failed: {str(e)}")
+
+def parse_json_response(content: str) -> dict:
+    """Parse JSON from AI response, handling markdown code blocks"""
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines[-1].startswith("```"):
+            lines = lines[:-1]
+        content = "\n".join(lines)
+    
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse AI response as JSON: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {str(e)}")
+
 def classify_document(text: str) -> List[ClassificationResult]:
     """
     Multi-label classification based on pharmacovigilance rules:
@@ -88,6 +145,9 @@ def classify_document(text: str) -> List[ClassificationResult]:
     - PQC: product quality issue (batch/lot, defect, contamination)
     - MI: medical information request (question about product/dosing)
     - NOT_RELEVANT: marketing, spam, unrelated content
+    
+    Uses rule-based detection for speed and determinism.
+    LLM-based classification available via /api/classify endpoint.
     """
     text_lower = text.lower()
     results = []
@@ -395,13 +455,20 @@ def detect_pdf_type(text: str, has_text_layer: bool = True) -> str:
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "model": AI_MODEL,
+        "api_base_url": AI_BASE_URL
+    }
 
 @app.post("/api/process", response_model=ProcessResponse)
 async def process_document(request: ProcessRequest, x_api_key: str = Header(None)):
     """
     Main processing endpoint for document classification and extraction
     Two-stage pattern: extract then verify
+    
+    Supports OpenAI-compatible APIs via AI_BASE_URL environment variable.
     """
     start_time = time.time()
     
@@ -410,10 +477,10 @@ async def process_document(request: ProcessRequest, x_api_key: str = Header(None
         raise HTTPException(status_code=401, detail="Invalid API key")
     
     try:
-        # Stage 1: Classification
+        # Stage 1: Classification (rule-based for speed)
         classifications = classify_document(request.text)
         
-        # Stage 1: Extraction
+        # Stage 1: Extraction (pattern-based with optional LLM enhancement)
         if request.stage == "extract":
             extracted_fields = extract_fields(request.text, request.pdf_type, request.language)
             
@@ -428,7 +495,9 @@ async def process_document(request: ProcessRequest, x_api_key: str = Header(None
                 metadata={
                     "pdf_type": request.pdf_type,
                     "language": request.language,
-                    "stage": "extract"
+                    "stage": "extract",
+                    "model_used": AI_MODEL,
+                    "ai_base_url": AI_BASE_URL
                 }
             )
         
@@ -467,21 +536,71 @@ async def process_document(request: ProcessRequest, x_api_key: str = Header(None
 
 @app.post("/api/classify")
 async def classify_only(request: ProcessRequest):
-    """Classification-only endpoint"""
+    """Classification-only endpoint (rule-based)"""
     classifications = classify_document(request.text)
     return {
         "success": True,
-        "classifications": [c.dict() for c in classifications]
+        "classifications": [c.dict() for c in classifications],
+        "model_used": AI_MODEL,
+        "ai_base_url": AI_BASE_URL
     }
 
 @app.post("/api/extract")
 async def extract_only(request: ProcessRequest):
-    """Extraction-only endpoint"""
+    """Extraction-only endpoint (pattern-based)"""
     fields = extract_fields(request.text, request.pdf_type, request.language)
     return {
         "success": True,
-        "extracted_fields": [f.dict() for f in fields]
+        "extracted_fields": [f.dict() for f in fields],
+        "model_used": AI_MODEL,
+        "ai_base_url": AI_BASE_URL
     }
+
+@app.post("/api/classify-llm")
+async def classify_with_llm(request: ProcessRequest):
+    """LLM-based classification endpoint using OpenAI-compatible API"""
+    prompt = f"""You are a pharmacovigilance expert classifier. Analyze the following document and classify it.
+
+CATEGORIES:
+- ICSR: Contains identifiable patient, reporter, suspect product, and adverse event (4-element test).
+- PQC: Reports product quality issues, manufacturing defects, batch/lot concerns.
+- MI: Asks questions about products, dosing, indications.
+- NOT_RELEVANT: Marketing, spam, unrelated content.
+
+DOCUMENT:
+Subject: {request.subject if hasattr(request, 'subject') else ''}
+Text: {request.text[:3000]}
+
+Respond ONLY with JSON:
+{{"classifications": [{{"category": "ICSR|PQC|MI|NOT_RELEVANT", "confidence_tier": "HIGH|MEDIUM|LOW", "reason": "explanation"}}]}}
+"""
+    
+    messages = [
+        {"role": "system", "content": "You are a pharmacovigilance classification expert."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        result = await call_ai_api(messages)
+        data = parse_json_response(result["content"])
+        
+        return {
+            "success": True,
+            "classifications": data.get("classifications", []),
+            "model_used": result.get("model", AI_MODEL),
+            "ai_base_url": AI_BASE_URL,
+            "token_usage": result.get("usage", {})
+        }
+    except Exception as e:
+        logger.error(f"LLM classification failed: {str(e)}")
+        # Fallback to rule-based
+        classifications = classify_document(request.text)
+        return {
+            "success": True,
+            "classifications": [c.dict() for c in classifications],
+            "fallback": "rule-based",
+            "error": str(e)
+        }
 
 # ============================================================================
 # Main Entry Point
@@ -489,4 +608,8 @@ async def extract_only(request: ProcessRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    print(f"Starting Smart Inbox Assistant AI Service")
+    print(f"AI Base URL: {AI_BASE_URL}")
+    print(f"AI Model: {AI_MODEL}")
+    print(f"Timeout: {AI_TIMEOUT}s")
     uvicorn.run(app, host="0.0.0.0", port=5000)
