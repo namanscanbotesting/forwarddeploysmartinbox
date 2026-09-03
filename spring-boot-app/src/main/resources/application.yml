@@ -1,0 +1,57 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@localhost:1521/FREEPDB1
+    username: inbox_assistant
+    password: inbox123
+    driver-class-name: oracle.jdbc.OracleDriver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.OracleDialect
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+# Python AI Service
+ai:
+  service:
+    url: http://localhost:5000
+    timeout-seconds: 120
+
+# Email IMAP Configuration
+email:
+  imap:
+    host: imap.gmail.com
+    port: 993
+    username: ${EMAIL_USERNAME:}
+    password: ${EMAIL_PASSWORD:}
+    folder: INBOX
+    enabled: false
+
+# Security
+security:
+  basic:
+    username: reviewer
+    password: review123
+
+# Async Configuration
+async:
+  core-pool-size: 4
+  max-pool-size: 10
+  queue-capacity: 100
+
+# Logging
+logging:
+  level:
+    com.pharma.inbox: DEBUG
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
